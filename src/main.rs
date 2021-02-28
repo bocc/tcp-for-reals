@@ -1,16 +1,26 @@
 use bincode::deserialize;
 use bytes::{Buf, BytesMut};
-use serde::{Deserialize, Serialize};
-use std::io;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use std::{io, marker::PhantomData};
 use tokio_util::codec::Decoder;
 
 const MAX: usize = 8196 * 1024;
 
-struct Payload<'a, T: Deserialize<'a>> {
-    _type: std::marker::PhantomData<&'a T>,
+struct Payload<T: DeserializeOwned>(PhantomData<T>);
+
+impl<T: DeserializeOwned> From<T> for Payload<T> {
+    fn from(_: T) -> Self {
+        Payload::<T>(PhantomData)
+    }
 }
 
-impl<'a, T: Deserialize<'a>> Decoder for Payload<'a, T> {
+#[derive(Debug, Deserialize)]
+struct Example {
+    field: String,
+}
+
+impl<T: DeserializeOwned> Decoder for Payload<T> {
     type Item = T;
     type Error = std::io::Error;
 
@@ -39,15 +49,19 @@ impl<'a, T: Deserialize<'a>> Decoder for Payload<'a, T> {
         let data = src[4..4 + length].to_vec();
         src.advance(4 + length);
 
-        let a1: Result<Self::Item, _> = deserialize(&data);
-        match a1 {
-            Ok(res) =>
-                return Ok(Some(res)),
-            Err(_) => panic!(),
+        match deserialize(&data) {
+            Ok(res) => Ok(Some(res)),
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "couldn't digest input",
+            )),
         }
     }
 }
 
 fn main() {
-    println!("Hello, world!");
+    let b1 = b"asdflkj";
+    let mut b2 = BytesMut::from(b1.as_ref());
+    let a3 = Payload::<Example>(PhantomData).decode(&mut b2);
+    println!("{:?}", &a3);
 }
