@@ -80,6 +80,7 @@ impl<T: Serialize> Encoder<T> for Payload<T> {
 
         dst.extend_from_slice(&len_slice);
         dst.extend_from_slice(&encoded);
+
         Ok(())
     }
 }

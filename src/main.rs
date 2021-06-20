@@ -1,25 +1,25 @@
+mod conn;
 mod payload;
-use serde::{Deserialize, Serialize};
-use std::error::Error;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-};
-use tokio_util::codec::{Decoder, Encoder};
 
+use serde::{Deserialize, Serialize};
+use tokio::net::{TcpListener, TcpStream};
+
+use conn::Conn;
 use payload::Payload;
 
 #[derive(Debug, Serialize, Deserialize)]
 enum Frame {
-    Version(u32, u32, u32),
-    Message(Vec<usize>),
+    Version(u32),
+    Message(String),
     Bye,
 }
 
 // what do we do
 // we do replies and responses
-// the client starts with a version
-// error handling is outsourced completely
+// then we implement a basic protocol with some context, that can work
+// as a state machine to handle communications
+// then we generate our protocol from a specification at build time, allowing
+// Rust to validate it
 #[tokio::main]
 async fn main() {
     if std::env::args().any(|arg| arg == "--serve") {
@@ -29,11 +29,9 @@ async fn main() {
             .expect("could not bind socket.");
 
         loop {
-            if let Ok((socket, _)) = listener.accept().await {
+            if let Ok((stream, _)) = listener.accept().await {
                 print!("serving... ");
-                if let Err(e) = process(socket).await {
-                    println!("err: {}", e);
-                }
+                process_server(stream).await;
             }
         }
     } else {
@@ -46,40 +44,39 @@ async fn main() {
     }
 }
 
-async fn process(mut socket: TcpStream) -> Result<(), Box<dyn Error>> {
-    let mut buf = bytes::BytesMut::new();
-    let mut payload = Payload::new();
+async fn process_server(stream: TcpStream) {
+    let mut conn: Conn<Frame> = Conn::new(stream);
 
-    let frame = loop {
-        if 0 == socket.read_buf(&mut buf).await? {
-            // EOF
-            break Frame::Bye;
+    loop {
+        match conn::receive(&mut conn).await {
+            Ok(frame) => match frame {
+                Frame::Version(v) => println!("got version: {}", v),
+                Frame::Message(m) => println!("got message: {}", m),
+                Frame::Bye => {
+                    println!("client closed connection");
+                    break;
+                }
+            },
+            Err(e) => {
+                eprintln!("err: {}", e);
+                break;
+            }
         }
-
-        match payload.decode(&mut buf) {
-            Ok(Some(frame)) => break frame,
-            Ok(None) => continue,
-            Err(e) => return Err(Box::new(e)),
-        }
-    };
-
-    if let Frame::Message(msg) = frame {
-        println!("len: {}", msg.len());
     }
-
-    Ok(())
 }
 
-async fn process_client(mut stream: TcpStream) {
-    let mut buf = bytes::BytesMut::new();
-    let mut payload = Payload::new();
-    if let Err(e) = payload.encode(Frame::Message(vec![0; 300000]), &mut buf) {
-        println!("uh oh. {}", e);
-        return;
-    }
+async fn process_client(stream: TcpStream) {
+    let mut conn: Conn<Frame> = Conn::new(stream);
 
-    match stream.write_buf(&mut buf).await {
-        Ok(n) => println!("client: wrote {} to stream", n),
-        Err(e) => println!("client: error: {}", e),
+    let frames = vec![
+        Frame::Version(64),
+        Frame::Message("szevasz".to_string()),
+        Frame::Bye,
+    ];
+
+    for frame in frames.into_iter() {
+        if let Err(e) = conn::send(&mut conn, frame).await {
+            eprintln!("could not send frame: {}", e);
+        }
     }
 }
