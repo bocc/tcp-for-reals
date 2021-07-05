@@ -22,8 +22,7 @@ enum Frame {
 // Rust to validate it
 #[tokio::main]
 async fn main() {
-    if std::env::args().any(|arg| arg == "--serve") {
-        println!("server > ");
+    let server = tokio::spawn(async {
         let listener = TcpListener::bind("127.0.0.1:8080")
             .await
             .expect("could not bind socket.");
@@ -34,14 +33,15 @@ async fn main() {
                 process_server(stream).await;
             }
         }
+    });
+
+    if let Ok(stream) = TcpStream::connect("127.0.0.1:8080").await {
+        process_client(stream).await;
     } else {
-        print!("client > ");
-        if let Ok(stream) = TcpStream::connect("127.0.0.1:8080").await {
-            process_client(stream).await;
-        } else {
-            println!("could not connect.")
-        }
+        println!("could not connect.")
     }
+
+    server.abort();
 }
 
 async fn process_server(stream: TcpStream) {
